@@ -51,6 +51,26 @@ class MoELoraLayer(LoraLayer):
             else:
                 self.to(self.weight.device)
 
+    def reset_lora_parameters(self, adapter_name, init_lora_weights):
+        if init_lora_weights is False:
+            return
+
+        if adapter_name in self.lora_A.keys():
+            for i in range(self.num_experts):
+                if init_lora_weights is True:
+                    # initialize A the same way as the default for nn.Linear and B to zero
+                    # https://github.com/microsoft/LoRA/blob/a0a92e0f26c067cf94747bdbf1ce73793fa44d19/loralib/layers.py#L124
+                    nn.init.kaiming_uniform_(self.lora_A[adapter_name].loraA[i].mlp.weight, a=math.sqrt(5))
+                elif init_lora_weights.lower() == "gaussian":
+                    nn.init.normal_(self.lora_A[adapter_name].loraA[i].mlp.weight, std=1 / self.r[adapter_name])
+                else:
+                    raise ValueError(f"Unknown initialization {init_lora_weights}")
+                nn.init.zeros_(self.lora_B[adapter_name].loraB[i].mlp.weight)
+            if adapter_name in self.lora_embedding_A.keys():
+                # initialize a the same way as the default for nn.linear and b to zero
+                nn.init.zeros_(self.lora_embedding_A[adapter_name].loraA[i].mlp.weight)
+                nn.init.normal_(self.lora_embedding_B[adapter_name].loraB[i].mlp.weight)
+
 
 class MoELoraLinear(nn.Module, MoELoraLayer):
     # Lora implemented in a dense layer
@@ -234,7 +254,7 @@ class MoELinearB(nn.Module):
 
 
 class Expert(nn.Module):
-
+    '''Expert block in LoRA'''
     def __init__(self, in_features, out_features):
         
         super().__init__()
@@ -250,7 +270,7 @@ class Expert(nn.Module):
 
 
 class Router(nn.Module):
-
+    '''Router block in LoRA'''
     def __init__(self, input_dim, num_experts):
 
         super().__init__()

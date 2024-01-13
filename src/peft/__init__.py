@@ -51,6 +51,8 @@ from .tuners import (
     LoraConfig,
     LoftQConfig,
     LoraModel,
+    MoELoraConfig,
+    MoELoraModel,
     LoHaConfig,
     LoHaModel,
     LoKrConfig,

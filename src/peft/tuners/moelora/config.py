@@ -26,7 +26,7 @@ class MoELoraConfig(LoraConfig):
     """
     This is the configuration class to store the configuration of a [`~peft.MoELora`]
     """
-    expert_num: int = field(default=4, metadata={"help": "Number of experts in the MoE layer."})
+    num_experts: int = field(default=4, metadata={"help": "Number of experts in the MoE layer."})
 
     def __post_init__(self):
         self.peft_type = PeftType.MOELORA

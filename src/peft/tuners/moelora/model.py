@@ -36,6 +36,8 @@ from peft.tuners.lora import (
     LoraModel,
     LoraLayer,
 )
+from peft.tuners.tuners_utils import BaseTuner, BaseTunerLayer, check_target_module_exists
+
 
 
 def is_bnb_available():
@@ -47,38 +49,47 @@ class MoELoraModel(LoraModel):
     Create MoELoRA (MoE based LoRA) model from a pretrained transformers model.
     """
     prefix: str = "moelora_"
+    lora_prefix: str = "lora_"
     
-    def __init__(self, model, config, adapter_name):
+    def __init__(self, model, config, adapter_names):
         nn.Module.__init__(self)
         self.model = model
         self.forward = self.model.forward
         self.peft_config = config
-        self.add_adapter(adapter_name, self.peft_config[adapter_name])
+        for adapter_name in adapter_names:
+            self.add_adapter(adapter_name, self.peft_config[adapter_name])
 
 
     def add_adapter(self, adapter_name, config=None):
         if config is not None:  # get the lora config
             model_config = self.model.config.to_dict() if hasattr(self.model.config, "to_dict") else self.model.config
+            
             config = self._prepare_moelora_config(config, model_config)   # load config
             self.peft_config[adapter_name] = config # subsititue the original config
+        
         self._create_and_replace(adapter_name)
+        
         if len(self.peft_config) > 1 and self.peft_config[adapter_name].bias != "none":
             raise ValueError(
                 "MoELoraModel supports only 1 adapter with bias. When using multiple adapters, set bias to 'none' for all adapters."
             )
-
-        self._mark_only_lora_as_trainable(self.model, self.peft_config[adapter_name].bias)
+        
+        self._mark_only_adapters_as_trainable(model=self.model, adapter_name=adapter_name)
         
         if self.peft_config[adapter_name].inference_mode:
             _freeze_adapter(self.model, adapter_name)
     
-    def _mark_only_lora_as_trainable(model: nn.Module, bias: str = "none") -> None:
+    def _mark_only_adapters_as_trainable(self, model: nn.Module, adapter_name: str) -> None:
         """Only activate the LoRA layer as trainable"""
+        
         for n, p in model.named_parameters():
-            if "lora_" not in n:
+            if self.lora_prefix not in n:
                 p.requires_grad = False
+        
+        bias = self.peft_config[adapter_name].bias
         if bias == "none":
             return
+        
         elif bias == "all":
             for n, p in model.named_parameters():
                 if "bias" in n:
@@ -92,18 +103,10 @@ class MoELoraModel(LoraModel):
 
     def _create_and_replace(
         self,
-        lora_config,
-        adapter_name,
-        target,
-        target_name,
-        parent,
-        current_key,
-        **optional_kwargs,
-    ):
+        adapter_name):
         """Replace the target `Linear` module with LoRA layer (Linear+LoRA)"""
         lora_config = self.peft_config[adapter_name]
         loaded_in_8bit = getattr(self.model, "is_loaded_in_8bit", False)
-        
         
         if loaded_in_8bit and not is_bnb_available():
             raise ImportError(
@@ -111,15 +114,18 @@ class MoELoraModel(LoraModel):
                 "You can install it with `pip install bitsandbytes`."
             )
         is_target_modules_in_base_model = False
+        
         kwargs = {
             "r": lora_config.r,
             "lora_alpha": lora_config.lora_alpha,
             "lora_dropout": lora_config.lora_dropout,
             "fan_in_fan_out": lora_config.fan_in_fan_out,
             "init_lora_weights": lora_config.init_lora_weights,
-            "expert_num": lora_config.expert_num,
+            "num_experts": lora_config.num_experts,
         }
+        
         key_list = [key for key, _ in self.model.named_modules()]   # all module in raw model
+        
         for key in key_list:
             # find the corresponding modules. target module has been split into list.
             if isinstance(lora_config.target_modules, str):
@@ -130,7 +136,9 @@ class MoELoraModel(LoraModel):
                 if not is_target_modules_in_base_model:
                     is_target_modules_in_base_model = True
                 parent, target, target_name = _get_submodules(self.model, key)
+                
                 bias = target.bias is not None
+                
                 if isinstance(target, MoELoraLayer):
                     target.update_layer(
                         adapter_name,
@@ -167,8 +175,7 @@ class MoELoraModel(LoraModel):
                                 f"Target module {target} is not supported. "
                                 f"Currently, only `torch.nn.Linear` and `Conv1D` are supported."
                             )
-                        new_module = MoELoraLinear(adapter_name, in_features, out_features, 
-                                                    bias=bias, **kwargs)
+                        new_module = MoELoraLinear(target, adapter_name, bias=bias, **kwargs)
 
                     self._replace_module(parent, target_name, new_module, target)
         if not is_target_modules_in_base_model:
