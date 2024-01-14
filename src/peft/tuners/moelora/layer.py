@@ -85,6 +85,7 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
         fan_in_fan_out: bool = False,  # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
         init_lora_weights: Union[bool, str] = True,
         use_rslora: bool = False,
+        bias: bool = False,
         **kwargs,
     ) -> None:
         self.num_experts = kwargs.pop("num_experts", True)
@@ -106,6 +107,7 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
             self.weight.data = self.weight.data.T
 
         self._active_adapter = adapter_name
+        self.bias = bias
         self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora)
 
 
@@ -174,6 +176,7 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
 
         if self._active_adapter not in self.lora_A.keys():   # No adapter, directly use linear
             return F.linear(x, transpose(self.weight, self.fan_in_fan_out), bias=self.bias)
+        
         if self.disable_adapters:   # No adapter
             if self.r[self._active_adapter] > 0 and self.merged: # merge the adapter to linear
                 self.unmerge(task_id)
