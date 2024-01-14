@@ -51,13 +51,12 @@ class MoELoraModel(LoraModel):
     prefix: str = "moelora_"
     lora_prefix: str = "lora_"
     
-    def __init__(self, model, config, adapter_names):
+    def __init__(self, model, config, adapter_name):
         nn.Module.__init__(self)
         self.model = model
         self.forward = self.model.forward
         self.peft_config = config
-        for adapter_name in adapter_names:
-            self.add_adapter(adapter_name, self.peft_config[adapter_name])
+        self.add_adapter(adapter_name, self.peft_config[adapter_name])
 
 
     def add_adapter(self, adapter_name, config=None):

@@ -24,6 +24,7 @@ class MoELoraLayer(LoraLayer):
         
         self.r[adapter_name] = r
         self.lora_alpha[adapter_name] = lora_alpha
+        
         if lora_dropout > 0.0:
             lora_dropout_layer = nn.Dropout(p=lora_dropout)
         else:
@@ -85,7 +86,6 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
         fan_in_fan_out: bool = False,  # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
         init_lora_weights: Union[bool, str] = True,
         use_rslora: bool = False,
-        bias: bool = False,
         **kwargs,
     ) -> None:
         self.num_experts = kwargs.pop("num_experts", True)
@@ -107,11 +107,11 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
             self.weight.data = self.weight.data.T
 
         self._active_adapter = adapter_name
-        self.bias = bias
+        self.bias = nn.Parameter(base_layer.bias) if base_layer.bias is not None else None
         self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora)
 
 
-    def merge(self, adapter_names: Optional[List[str]] = None) -> None:
+    def merge(self, task_id) -> None:
         """
         Merge the active adapter weights into the base weights
 
@@ -132,7 +132,7 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
             )
 
         if self.r[self._active_adapter] > 0:
-            expert_weight = self.router[self._active_adapter](self.expert_embedding[self._active_adapter](0))
+            expert_weight = self.router[self._active_adapter](self.expert_embedding[self._active_adapter](task_id))
             for i in range(self.num_experts):
                 lora_A_weights = self.lora_A[self._active_adapter].loraA[i].mlp.weight
                 lora_B_weights = self.lora_B[self._active_adapter].loraB[i].mlp.weight
@@ -148,7 +148,6 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
 
 
     def unmerge(self, task_id):
-        task_id = 0
         if self._active_adapter not in self.lora_A.keys():
             return
         if not self.merged:
@@ -171,7 +170,7 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
 
 
     def forward(self, x: torch.Tensor, **kwargs):
-        task_id = 0
+        task_id = torch.tensor(0).to(x.device)
         previous_dtype = x.dtype
 
         if self._active_adapter not in self.lora_A.keys():   # No adapter, directly use linear
@@ -187,7 +186,9 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
 
             x = x.to(self.lora_A[self._active_adapter].loraA[0].weight.dtype)
 
+            # task id should be a tensor for a valid index for nn.Embedding
             expert_weight = self.router[self._active_adapter](self.expert_embedding[self._active_adapter](task_id))
+            
             for i in range(self.num_experts):
                 result += ( # lora process
                     self.lora_B[self._active_adapter].loraB[i](
@@ -200,10 +201,8 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
             result = F.linear(x, transpose(self.weight, self.fan_in_fan_out), bias=self.bias)
 
         result = result.to(previous_dtype)
-
         return result
     
-
 
 class MoELinearA(nn.Module):
     '''MoE based LoRA block'''
@@ -229,7 +228,6 @@ class MoELinearA(nn.Module):
 
         return outputs
     
-
 
 class MoELinearB(nn.Module):
     '''MoE based LoRA block'''
@@ -278,8 +276,9 @@ class Router(nn.Module):
 
         super().__init__()
         self.ff = nn.Linear(input_dim, num_experts, bias=False)
+        self.activation = nn.Softmax(dim=-1)
     
     def forward(self, x):
         logits = self.ff(x)
-        probs = nn.Softmax(logits, dim=-1)
+        probs = self.activation(logits)
         return probs
