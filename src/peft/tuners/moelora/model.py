@@ -48,7 +48,6 @@ class MoELoraModel(LoraModel):
     """
     Create MoELoRA (MoE based LoRA) model from a pretrained transformers model.
     """
-    prefix: str = "moelora_"
     lora_prefix: str = "lora_"
     
     def __init__(self, model, config, adapter_name):

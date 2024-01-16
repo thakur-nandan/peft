@@ -67,10 +67,11 @@ class MoELoraLayer(LoraLayer):
                 else:
                     raise ValueError(f"Unknown initialization {init_lora_weights}")
                 nn.init.zeros_(self.lora_B[adapter_name].loraB[i].mlp.weight)
-            if adapter_name in self.lora_embedding_A.keys():
-                # initialize a the same way as the default for nn.linear and b to zero
-                nn.init.zeros_(self.lora_embedding_A[adapter_name].loraA[i].mlp.weight)
-                nn.init.normal_(self.lora_embedding_B[adapter_name].loraB[i].mlp.weight)
+            
+            # if adapter_name in self.lora_embedding_A.keys():
+            #     # initialize a the same way as the default for nn.linear and b to zero
+            #     nn.init.zeros_(self.lora_embedding_A[adapter_name].loraA[i].mlp.weight)
+            #     nn.init.normal_(self.lora_embedding_B[adapter_name].loraB[i].mlp.weight)
 
 
 class MoELoraLinear(nn.Module, MoELoraLayer):

@@ -73,7 +73,7 @@ PEFT_TYPE_TO_CONFIG_MAPPING: Dict[str, PeftConfig] = {
     "PREFIX_TUNING": PrefixTuningConfig,
     "P_TUNING": PromptEncoderConfig,
     "LORA": LoraConfig,
-    "MoELORA": MoELoraConfig,
+    "MOELORA": MoELoraConfig,
     "LOHA": LoHaConfig,
     "LOKR": LoKrConfig,
     "ADALORA": AdaLoraConfig,
@@ -89,7 +89,7 @@ PEFT_TYPE_TO_TUNER_MAPPING = {
     "ADALORA": AdaLoraModel,
     "IA3": IA3Model,
     "OFT": OFTModel,
-    "MoELORA": MoELoraModel,
+    "MOELORA": MoELoraModel,
 }
 
 
