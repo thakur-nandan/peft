@@ -189,7 +189,7 @@ def set_peft_model_state_dict(model, peft_model_state_dict, adapter_name="defaul
             PeftType.LOHA: "hada_",
             PeftType.LOKR: "lokr_",
             PeftType.OFT: "oft_",
-            PeftType.MOELORA: "moelora_",
+            PeftType.MOELORA: "lora_",
         }[config.peft_type]
         for k, v in state_dict.items():
             if parameter_prefix in k:

@@ -17,7 +17,7 @@ class MoELoraLayer(LoraLayer):
         super().__init__(base_layer=base_layer, **kwargs)
         self.num_experts = num_experts
     
-    def update_layer(self, adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora):
+    def update_layer(self, adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, init_router_weights, use_rslora):
         # This code works for linear layers, override for other layer types
         if r <= 0:
             raise ValueError(f"`r` should be a positive integer value but the value passed is {r}")
@@ -44,6 +44,9 @@ class MoELoraLayer(LoraLayer):
         if init_lora_weights:
             self.reset_lora_parameters(adapter_name, init_lora_weights)
         
+        if init_router_weights:
+            self.reset_router_parameters(adapter_name, init_router_weights)
+        
         weight = getattr(self.get_base_layer(), "weight", None)
         if weight is not None:
             # the layer is already completely initialized, this is an update
@@ -52,6 +55,13 @@ class MoELoraLayer(LoraLayer):
             else:
                 self.to(self.weight.device)
 
+    def reset_router_parameters(self, adapter_name, init_router_weights):
+        if init_router_weights is False:
+            return
+
+        if adapter_name in self.router.keys():
+            nn.init.normal_(self.router[adapter_name].ff.weight, std=1 / self.r[adapter_name])
+    
     def reset_lora_parameters(self, adapter_name, init_lora_weights):
         if init_lora_weights is False:
             return
@@ -68,10 +78,10 @@ class MoELoraLayer(LoraLayer):
                     raise ValueError(f"Unknown initialization {init_lora_weights}")
                 nn.init.zeros_(self.lora_B[adapter_name].loraB[i].mlp.weight)
             
-            # if adapter_name in self.lora_embedding_A.keys():
-            #     # initialize a the same way as the default for nn.linear and b to zero
-            #     nn.init.zeros_(self.lora_embedding_A[adapter_name].loraA[i].mlp.weight)
-            #     nn.init.normal_(self.lora_embedding_B[adapter_name].loraB[i].mlp.weight)
+            if adapter_name in self.lora_embedding_A.keys():
+                # initialize a the same way as the default for nn.linear and b to zero
+                nn.init.zeros_(self.lora_embedding_A[adapter_name].loraA[i].mlp.weight)
+                nn.init.normal_(self.lora_embedding_B[adapter_name].loraB[i].mlp.weight)
 
 
 class MoELoraLinear(nn.Module, MoELoraLayer):
@@ -86,10 +96,12 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
         lora_dropout: float = 0.0,
         fan_in_fan_out: bool = False,  # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
         init_lora_weights: Union[bool, str] = True,
+        init_router_weights: bool = True,
         use_rslora: bool = False,
         **kwargs,
     ) -> None:
-        self.num_experts = kwargs.pop("num_experts", True)
+        self.num_experts = kwargs.pop("num_experts", 4)
+        self.num_experts_per_token = kwargs.pop("num_experts_per_token", 2)
 
         super().__init__()
         MoELoraLayer.__init__(self, num_experts=self.num_experts, base_layer=base_layer, **kwargs)
@@ -109,7 +121,7 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
 
         self._active_adapter = adapter_name
         self.bias = nn.Parameter(base_layer.bias) if base_layer.bias is not None else None
-        self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, use_rslora)
+        self.update_layer(adapter_name, r, lora_alpha, lora_dropout, init_lora_weights, init_router_weights, use_rslora)
 
 
     def merge(self, task_id) -> None:
@@ -189,15 +201,19 @@ class MoELoraLinear(nn.Module, MoELoraLayer):
 
             # task id should be a tensor for a valid index for nn.Embedding
             expert_weight = self.router[self._active_adapter](self.expert_embedding[self._active_adapter](task_id))
-            
-            for i in range(self.num_experts):
-                result += ( # lora process
-                    self.lora_B[self._active_adapter].loraB[i](
-                        self.lora_A[self._active_adapter].loraA[i](self.lora_dropout[self._active_adapter](x)),
+
+            # implementing from sparse mixture of experts
+            _, selected_experts = torch.topk(expert_weight, self.num_experts_per_token)
+
+            for i in range(self.num_experts):   
+                if i in selected_experts:
+                    result += ( # lora process
+                        self.lora_B[self._active_adapter].loraB[i](
+                            self.lora_A[self._active_adapter].loraA[i](self.lora_dropout[self._active_adapter](x)),
+                        )
+                        * self.scaling[self._active_adapter]
+                        * expert_weight[..., i].unsqueeze(-1).unsqueeze(0)
                     )
-                    * self.scaling[self._active_adapter]
-                    * expert_weight[..., i].unsqueeze(-1).unsqueeze(0)
-                )
         else:
             result = F.linear(x, transpose(self.weight, self.fan_in_fan_out), bias=self.bias)
 

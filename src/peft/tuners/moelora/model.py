@@ -49,6 +49,7 @@ class MoELoraModel(LoraModel):
     Create MoELoRA (MoE based LoRA) model from a pretrained transformers model.
     """
     lora_prefix: str = "lora_"
+    router_prefix: str = "router"
     
     def __init__(self, model, config, adapter_name):
         nn.Module.__init__(self)
@@ -72,10 +73,43 @@ class MoELoraModel(LoraModel):
                 "MoELoraModel supports only 1 adapter with bias. When using multiple adapters, set bias to 'none' for all adapters."
             )
         
-        self._mark_only_adapters_as_trainable(model=self.model, adapter_name=adapter_name)
+        if self.peft_config[adapter_name].finetune_parameters == "router_only":
+            self._mark_only_router_as_trainable(model=self.model)
+        elif self.peft_config[adapter_name].finetune_parameters == "experts_only":
+            self._mark_only_adapters_as_trainable(model=self.model, adapter_name=adapter_name)
+        elif self.peft_config[adapter_name].finetune_parameters == "both":
+            self._mark_both_as_trainable(model=self.model, adapter_name=adapter_name)
         
         if self.peft_config[adapter_name].inference_mode:
             _freeze_adapter(self.model, adapter_name)
+
+    def _mark_both_as_trainable(self, model: nn.Module, adapter_name: str) -> None:
+        """Only activate the LoRA layer as trainable"""
+        
+        for n, p in model.named_parameters():
+            if self.lora_prefix not in n and self.router_prefix not in n:
+                p.requires_grad = False
+        
+        bias = self.peft_config[adapter_name].bias
+        if bias == "none":
+            return
+        
+        elif bias == "all":
+            for n, p in model.named_parameters():
+                if "bias" in n:
+                    p.requires_grad = True
+        elif bias == "lora_only":
+            for m in model.modules():
+                if isinstance(m, LoraLayer) and hasattr(m, "bias") and m.bias is not None:
+                    m.bias.requires_grad = True
+        else:
+            raise NotImplementedError
+    
+    def _mark_only_router_as_trainable(self, model: nn.Module) -> None:
+        "Onlu active the router in MoELora as trainable"
+        for n, p in model.named_parameters():
+            if self.router_prefix not in n:
+                p.requires_grad = False
     
     def _mark_only_adapters_as_trainable(self, model: nn.Module, adapter_name: str) -> None:
         """Only activate the LoRA layer as trainable"""
@@ -120,6 +154,8 @@ class MoELoraModel(LoraModel):
             "fan_in_fan_out": lora_config.fan_in_fan_out,
             "init_lora_weights": lora_config.init_lora_weights,
             "num_experts": lora_config.num_experts,
+            "init_router_weights": lora_config.init_router_weights,
+            "num_experts_per_token": lora_config.num_experts_per_token,
         }
         
         key_list = [key for key, _ in self.model.named_modules()]   # all module in raw model
@@ -144,6 +180,7 @@ class MoELoraModel(LoraModel):
                         lora_config.lora_alpha,
                         lora_config.lora_dropout,
                         lora_config.init_lora_weights,
+                        lora_config.init_router_weights,
                         lora_config.use_rslora,
                     )
                 else:

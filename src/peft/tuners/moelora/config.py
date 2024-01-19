@@ -27,6 +27,9 @@ class MoELoraConfig(LoraConfig):
     This is the configuration class to store the configuration of a [`~peft.MoELora`]
     """
     num_experts: int = field(default=4, metadata={"help": "Number of experts in the MoE layer."})
+    finetune_parameters: str = field(default="router_only", metadata={"help": "Whether to train the experts, router or both. Can be 'router_only', 'experts_only' or 'both'"})
+    init_router_weights: bool = field(default=False, metadata={"help": "Whether to initialize router weights or not."})
+    num_experts_per_token: int = field(default=2, metadata={"help": "Number of best sparse experts to choose."})
 
     def __post_init__(self):
         self.peft_type = PeftType.MOELORA
